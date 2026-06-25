@@ -187,9 +187,9 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { phone_number_id, waba_id, access_token, verify_token, pin } = body
 
-    if (!access_token || !phone_number_id) {
+    if (!phone_number_id) {
       return NextResponse.json(
-        { error: 'access_token and phone_number_id are required' },
+        { error: 'phone_number_id is required' },
         { status: 400 }
       )
     }
@@ -201,6 +201,42 @@ export async function POST(request: Request) {
           { status: 400 }
         )
       }
+    }
+
+    // Load any existing row up-front. We pull the stored secrets too so
+    // the caller can update non-secret fields (verify token, PIN, WABA
+    // id) WITHOUT re-pasting the long-lived access token every time —
+    // re-entry being mandatory was the main "save doesn't work" friction.
+    const { data: existing } = await supabase
+      .from('whatsapp_config')
+      .select('id, registered_at, phone_number_id, access_token, verify_token')
+      .eq('account_id', accountId)
+      .maybeSingle()
+
+    // Resolve the access token to verify with Meta + store. Prefer a
+    // freshly-supplied one; otherwise reuse the stored token by
+    // decrypting it so edits to other fields don't require re-entry.
+    let effectiveAccessToken: string
+    if (access_token) {
+      effectiveAccessToken = access_token
+    } else if (existing?.access_token) {
+      try {
+        effectiveAccessToken = decrypt(existing.access_token)
+      } catch (err) {
+        console.error('[whatsapp/config POST] stored token decrypt failed:', err)
+        return NextResponse.json(
+          {
+            error:
+              'The saved access token could not be read (ENCRYPTION_KEY may have changed). Please re-enter the Access Token.',
+          },
+          { status: 400 },
+        )
+      }
+    } else {
+      return NextResponse.json(
+        { error: 'Access Token is required for initial setup.' },
+        { status: 400 },
+      )
     }
 
     // Reject if another account has already claimed this phone_number_id.
@@ -240,7 +276,7 @@ export async function POST(request: Request) {
     try {
       phoneInfo = await verifyPhoneNumber({
         phoneNumberId: phone_number_id,
-        accessToken: access_token,
+        accessToken: effectiveAccessToken,
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
@@ -255,8 +291,15 @@ export async function POST(request: Request) {
     let encryptedAccessToken: string
     let encryptedVerifyToken: string | null
     try {
-      encryptedAccessToken = encrypt(access_token)
-      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
+      encryptedAccessToken = encrypt(effectiveAccessToken)
+      // Only overwrite the verify token when the field was included in
+      // the request. Omitting it preserves the stored value, so editing
+      // the PIN alone doesn't wipe the webhook verify token.
+      if ('verify_token' in body) {
+        encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
+      } else {
+        encryptedVerifyToken = existing?.verify_token ?? null
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown encryption error'
       console.error('Encryption failed:', message)
@@ -269,15 +312,9 @@ export async function POST(request: Request) {
       )
     }
 
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
-
+    // `existing` (fetched above) tells us whether this number is already
+    // registered with Meta — if so we can skip /register when the user
+    // didn't provide a PIN this time around.
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&
       existing?.registered_at != null
@@ -313,7 +350,7 @@ export async function POST(request: Request) {
         try {
           await registerPhoneNumber({
             phoneNumberId: phone_number_id,
-            accessToken: access_token,
+            accessToken: effectiveAccessToken,
             pin,
           })
           registeredAt = new Date().toISOString()
@@ -338,7 +375,7 @@ export async function POST(request: Request) {
       try {
         await subscribeWabaToApp({
           wabaId: waba_id,
-          accessToken: access_token,
+          accessToken: effectiveAccessToken,
         })
         subscribedAppsAt = new Date().toISOString()
       } catch (err) {

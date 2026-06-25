@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   Eye,
@@ -60,6 +60,14 @@ export function WhatsAppConfig() {
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+  const [verifyTokenEdited, setVerifyTokenEdited] = useState(false);
+  // Tracks unsaved edits so background refetches (profile reload,
+  // tab refocus) don't clobber what the user is typing.
+  const formDirtyRef = useRef(false);
+
+  const markFormDirty = useCallback(() => {
+    formDirtyRef.current = true;
+  }, []);
 
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
@@ -85,7 +93,11 @@ export function WhatsAppConfig() {
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
-  const fetchConfig = useCallback(async (acctId: string) => {
+  const fetchConfig = useCallback(async (
+    acctId: string,
+    options: { overwriteForm?: boolean } = {},
+  ) => {
+    const overwriteForm = options.overwriteForm ?? !formDirtyRef.current;
     setLoading(true);
     try {
       // Load form values from Supabase (shows what's in DB).
@@ -106,20 +118,31 @@ export function WhatsAppConfig() {
 
       if (data) {
         setConfig(data);
-        setPhoneNumberId(data.phone_number_id || '');
-        setWabaId(data.waba_id || '');
-        setAccessToken(MASKED_TOKEN);
-        setVerifyToken('');
-        setPin('');
-        setTokenEdited(false);
-      } else {
+        if (overwriteForm) {
+          setPhoneNumberId(data.phone_number_id || '');
+          setWabaId(data.waba_id || '');
+          // Secrets are stored encrypted and never sent to the browser.
+          // Show a masked placeholder when one exists so the user can
+          // tell it's saved; they only re-enter to change it.
+          setAccessToken(data.access_token ? MASKED_TOKEN : '');
+          setTokenEdited(false);
+          setVerifyToken(data.verify_token ? MASKED_TOKEN : '');
+          setVerifyTokenEdited(false);
+          setPin('');
+          formDirtyRef.current = false;
+        }
+      } else if (overwriteForm) {
         setConfig(null);
         setPhoneNumberId('');
         setWabaId('');
         setAccessToken('');
-        setVerifyToken('');
-        setPin('');
         setTokenEdited(false);
+        setVerifyToken('');
+        setVerifyTokenEdited(false);
+        setPin('');
+        formDirtyRef.current = false;
+      } else {
+        setConfig(null);
       }
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
@@ -184,29 +207,28 @@ export function WhatsAppConfig() {
       setSaving(true);
 
       // Always POST through the API — it verifies with Meta and encrypts
-      // the access_token server-side with ENCRYPTION_KEY. Skipping this
-      // and writing direct to Supabase stores the token in plaintext,
-      // which then fails decryption on every subsequent health check.
+      // secrets server-side with ENCRYPTION_KEY. Writing direct to
+      // Supabase would store the token in plaintext, which then fails
+      // decryption on every subsequent health check.
       const payload: Record<string, unknown> = {
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
-        verify_token: verifyToken.trim() || null,
         // Optional — only sent when the user filled it in. The server
         // requires it on first save or when changing numbers; for a
         // simple token rotation, leaving it blank skips re-register.
         pin: pin.trim() || null,
       };
 
+      // Only send secrets the user actually changed. Omitting them tells
+      // the server to keep the stored values — so you can tweak the PIN /
+      // WABA id without re-pasting the access token, and the saved verify
+      // token is never wiped. (Both fields show a masked placeholder when
+      // a value is already saved.)
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
         payload.access_token = accessToken.trim();
-      } else if (config) {
-        // Existing config — reuse stored encrypted token by decrypting on the
-        // server. But our POST handler requires an access_token to verify
-        // with Meta. If the user didn't change the token, we need to signal
-        // that. Simplest: require token re-entry if they're updating.
-        toast.error('Please re-enter the Access Token to save changes');
-        setSaving(false);
-        return;
+      }
+      if (verifyTokenEdited && verifyToken !== MASKED_TOKEN) {
+        payload.verify_token = verifyToken.trim() || null;
       }
 
       const res = await fetch('/api/whatsapp/config', {
@@ -256,7 +278,7 @@ export function WhatsAppConfig() {
         setPin('');
       }
 
-      if (accountId) await fetchConfig(accountId);
+      if (accountId) await fetchConfig(accountId, { overwriteForm: true });
     } catch (err) {
       console.error('Save error:', err);
       toast.error('Failed to save configuration');
@@ -341,8 +363,10 @@ export function WhatsAppConfig() {
       setPhoneNumberId('');
       setWabaId('');
       setAccessToken('');
-      setVerifyToken('');
       setTokenEdited(false);
+      setVerifyToken('');
+      setVerifyTokenEdited(false);
+      formDirtyRef.current = false;
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
@@ -561,7 +585,10 @@ export function WhatsAppConfig() {
               <Input
                 placeholder="e.g. 100234567890123"
                 value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
+                onChange={(e) => {
+                  setPhoneNumberId(e.target.value);
+                  markFormDirty();
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -571,7 +598,10 @@ export function WhatsAppConfig() {
               <Input
                 placeholder="e.g. 100234567890456"
                 value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
+                onChange={(e) => {
+                  setWabaId(e.target.value);
+                  markFormDirty();
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -586,11 +616,13 @@ export function WhatsAppConfig() {
                   onChange={(e) => {
                     setAccessToken(e.target.value);
                     setTokenEdited(true);
+                    markFormDirty();
                   }}
                   onFocus={() => {
                     if (accessToken === MASKED_TOKEN) {
                       setAccessToken('');
                       setTokenEdited(true);
+                      markFormDirty();
                     }
                   }}
                   className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
@@ -605,7 +637,8 @@ export function WhatsAppConfig() {
               </div>
               {config && !tokenEdited && (
                 <p className="text-xs text-muted-foreground">
-                  Token is hidden for security. Re-enter it to update configuration.
+                  Saved and hidden for security. Leave it as-is to keep the
+                  current token, or type a new one to replace it.
                 </p>
               )}
             </div>
@@ -615,11 +648,24 @@ export function WhatsAppConfig() {
               <Input
                 placeholder="Create a custom verify token"
                 value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
+                onChange={(e) => {
+                  setVerifyToken(e.target.value);
+                  setVerifyTokenEdited(true);
+                  markFormDirty();
+                }}
+                onFocus={() => {
+                  if (verifyToken === MASKED_TOKEN) {
+                    setVerifyToken('');
+                    setVerifyTokenEdited(true);
+                    markFormDirty();
+                  }
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
               <p className="text-xs text-muted-foreground">
-                A custom string you create. Must match the token you set in Meta webhook settings.
+                {config?.verify_token && !verifyTokenEdited
+                  ? 'Saved and hidden for security. Leave it as-is to keep it, or type a new one to replace it.'
+                  : 'A custom string you create. Must match the token you set in Meta webhook settings.'}
               </p>
             </div>
 
@@ -634,9 +680,10 @@ export function WhatsAppConfig() {
                 maxLength={6}
                 placeholder="6-digit PIN from Meta WhatsApp Manager"
                 value={pin}
-                onChange={(e) =>
-                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
-                }
+                onChange={(e) => {
+                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                  markFormDirty();
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
               />
               <p className="text-xs text-muted-foreground leading-relaxed">

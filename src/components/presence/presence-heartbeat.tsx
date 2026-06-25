@@ -50,19 +50,35 @@ export function PresenceHeartbeat() {
 
     const beat = async () => {
       if (cancelled) return;
+      // Skip while the browser knows it's offline — the fetch would only
+      // throw "Failed to fetch". The `online` listener below beats again
+      // the moment connectivity returns, so we lose nothing by waiting.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        return;
+      }
       // Coalesce bursts: a tab refocus fires visibilitychange AND focus
       // together, so skip a beat within 1s of the last to avoid two RPCs
       // in the same frame. The 30s interval is never affected.
       const t = Date.now();
       if (t - lastBeatAt < 1_000) return;
       lastBeatAt = t;
-      const { error } = await supabase.rpc("touch_presence", {
-        p_status: currentStatus(),
-      });
-      if (error && !cancelled) {
-        // Non-fatal: presence is best-effort. Log once per failure so a
-        // misconfigured RPC is visible without spamming.
-        console.error("[PresenceHeartbeat] touch_presence failed:", error.message);
+      try {
+        const { error } = await supabase.rpc("touch_presence", {
+          p_status: currentStatus(),
+        });
+        if (error && !cancelled) {
+          // A real RPC/permission error (not a transient network blip) —
+          // worth surfacing so a misconfigured function stays visible.
+          console.error(
+            "[PresenceHeartbeat] touch_presence failed:",
+            error.message,
+          );
+        }
+      } catch {
+        // Transient network failure (offline, tab waking from sleep, DNS
+        // hiccup) rejects the fetch with "Failed to fetch". Presence is
+        // best-effort and self-heals on the next beat / focus / reconnect,
+        // so swallow it rather than spamming the console.
       }
     };
 
@@ -86,6 +102,9 @@ export function PresenceHeartbeat() {
     };
     document.addEventListener("visibilitychange", onReturn);
     window.addEventListener("focus", onReturn);
+    // Reconnect → beat right away so the member flips back to online
+    // without waiting up to 30s for the next interval tick.
+    window.addEventListener("online", onReturn);
 
     void beat();
     const interval = setInterval(() => void beat(), HEARTBEAT_MS);
@@ -98,6 +117,7 @@ export function PresenceHeartbeat() {
       );
       document.removeEventListener("visibilitychange", onReturn);
       window.removeEventListener("focus", onReturn);
+      window.removeEventListener("online", onReturn);
     };
   }, [accountId]);
 

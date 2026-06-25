@@ -63,6 +63,8 @@ export default function SettingsPage() {
     api: <ApiKeysSettings />,
   };
 
+  const sections = Object.keys(panel) as SettingsSection[];
+
   return (
     <div>
       <div>
@@ -77,7 +79,13 @@ export default function SettingsPage() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
         <SettingsRail active={section} onSelect={go} hints={hints} />
-        <div className="min-w-0">{panel[section]}</div>
+        <div className="min-w-0">
+          {sections.map((key) => (
+            <div key={key} hidden={section !== key}>
+              {panel[key]}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
