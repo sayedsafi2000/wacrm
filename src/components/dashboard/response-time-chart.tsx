@@ -44,9 +44,9 @@ export function ResponseTimeChart({
     })) ?? []
 
   return (
-    <section className="rounded-xl border border-border bg-card">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
+    <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+      <header className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-5">
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground">
             Average First Response Time
           </h2>
@@ -55,7 +55,7 @@ export function ResponseTimeChart({
             weekday
           </p>
         </div>
-        <div className="flex items-center gap-3 text-right text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs sm:justify-end sm:gap-3 sm:text-right">
           {thresholdMinutes > 0 && (
             <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 font-medium text-rose-300 tabular-nums">
               target {thresholdMinutes}m
@@ -78,9 +78,9 @@ export function ResponseTimeChart({
         </div>
       </header>
 
-      <div className="p-5">
+      <div className="min-w-0 p-4 sm:p-5">
         {loading || !data ? (
-          <Skeleton className="h-[260px] w-full" />
+          <Skeleton className="h-[220px] w-full sm:h-[260px]" />
         ) : !hasData ? (
           <EmptyState
             icon={Clock}
@@ -100,7 +100,7 @@ export function ResponseTimeChart({
             yAxisWidth={48}
             // Compact height so the chart sits well inside the card
             // without dominating the row alongside the donut + activity feed.
-            className="h-[260px]"
+            className="h-[220px] sm:h-[260px]"
           />
         )}
       </div>

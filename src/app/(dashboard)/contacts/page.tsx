@@ -56,11 +56,21 @@ import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ContactAvatar } from '@/components/contacts/contact-avatar';
+import {
+  contactStatusPreview,
+  formatPhoneDisplay,
+  hasRecentStatus,
+} from '@/lib/contacts/display';
 
 const PAGE_SIZE = 25;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
+  /** Latest conversation preview for list subtitle. */
+  last_message_text?: string | null;
+  last_message_at?: string | null;
+  unread_count?: number;
 }
 
 export default function ContactsPage() {
@@ -152,9 +162,15 @@ export default function ContactsPage() {
       contactRows = rows.map((r) => r.contact);
       count = rows.length > 0 ? Number(rows[0].total_count) : 0;
     } else {
+      // `estimated` (planner estimate for large tables, exact for small)
+      // instead of `exact`: an exact count must scan every row through
+      // the per-row RLS function, which blows past the statement timeout
+      // once an account holds hundreds of thousands of contacts and made
+      // the whole list fail to load. The total is only used for the
+      // page counter, where an estimate is fine.
       let query = supabase
         .from('contacts')
-        .select('*', { count: 'exact' })
+        .select('*', { count: 'estimated' })
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -196,12 +212,45 @@ export default function ContactsPage() {
       tagsByContact[ct.contact_id].push(ct.tag_id);
     });
 
-    const enriched: ContactWithTags[] = contactRows.map((c) => ({
-      ...c,
-      tags: (tagsByContact[c.id] ?? [])
-        .map((tid) => tagsMap[tid])
-        .filter(Boolean),
-    }));
+    // Conversation previews for WhatsApp-style status lines.
+    const { data: convRows } = await supabase
+      .from('conversations')
+      .select('contact_id, last_message_text, last_message_at, unread_count')
+      .in('contact_id', contactIds);
+    if (seq !== fetchSeq.current) return;
+
+    const convByContact = new Map<
+      string,
+      {
+        last_message_text?: string | null;
+        last_message_at?: string | null;
+        unread_count?: number;
+      }
+    >();
+    for (const row of convRows ?? []) {
+      const prev = convByContact.get(row.contact_id);
+      if (
+        !prev ||
+        (row.last_message_at &&
+          (!prev.last_message_at ||
+            new Date(row.last_message_at) > new Date(prev.last_message_at)))
+      ) {
+        convByContact.set(row.contact_id, row);
+      }
+    }
+
+    const enriched: ContactWithTags[] = contactRows.map((c) => {
+      const conv = convByContact.get(c.id);
+      return {
+        ...c,
+        tags: (tagsByContact[c.id] ?? [])
+          .map((tid) => tagsMap[tid])
+          .filter(Boolean),
+        last_message_text: conv?.last_message_text,
+        last_message_at: conv?.last_message_at,
+        unread_count: conv?.unread_count ?? 0,
+      };
+    });
 
     setContacts(enriched);
     setLoading(false);
@@ -540,8 +589,8 @@ export default function ContactsPage() {
                   aria-label="Select all contacts on this page"
                 />
               </TableHead>
-              <TableHead className="text-muted-foreground">Name</TableHead>
-              <TableHead className="text-muted-foreground">Phone</TableHead>
+              <TableHead className="text-muted-foreground">Contact</TableHead>
+              <TableHead className="text-muted-foreground hidden sm:table-cell">Phone</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">Email</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">Company</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">Tags</TableHead>
@@ -584,7 +633,16 @@ export default function ContactsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              contacts.map((contact) => (
+              contacts.map((contact) => {
+                const statusLine = contactStatusPreview(
+                  contact.status_text,
+                  contact.last_message_text,
+                );
+                const statusRing =
+                  hasRecentStatus(contact.status_updated_at) ||
+                  (contact.unread_count ?? 0) > 0;
+
+                return (
                 <TableRow
                   key={contact.id}
                   className="border-border hover:bg-muted/50 cursor-pointer"
@@ -597,11 +655,40 @@ export default function ContactsPage() {
                       aria-label={`Select ${contact.name || contact.phone}`}
                     />
                   </TableCell>
-                  <TableCell className="text-foreground font-medium">
-                    {contact.name || <span className="text-muted-foreground italic">Unnamed</span>}
+                  <TableCell>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <ContactAvatar
+                        name={contact.name}
+                        phone={contact.phone}
+                        avatarUrl={contact.avatar_url}
+                        showStatusRing={statusRing}
+                        size="md"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-foreground">
+                          {contact.name || (
+                            <span className="text-muted-foreground italic">
+                              Unnamed
+                            </span>
+                          )}
+                        </p>
+                        {statusLine ? (
+                          <p className="truncate text-sm text-[#667781] dark:text-[#8696a0]">
+                            {statusLine}
+                          </p>
+                        ) : (
+                          <p className="truncate text-sm italic text-muted-foreground">
+                            No status
+                          </p>
+                        )}
+                        <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground lg:hidden">
+                          {formatPhoneDisplay(contact.phone)}
+                        </p>
+                      </div>
+                    </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone}
+                  <TableCell className="hidden sm:table-cell text-muted-foreground font-mono text-xs">
+                    {formatPhoneDisplay(contact.phone)}
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden md:table-cell text-sm">
                     {contact.email || <span className="text-muted-foreground">-</span>}
@@ -684,7 +771,8 @@ export default function ContactsPage() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
+              );
+              })
             )}
           </TableBody>
         </Table>

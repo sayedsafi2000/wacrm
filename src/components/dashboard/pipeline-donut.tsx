@@ -15,17 +15,17 @@ interface PipelineDonutProps {
 
 export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
-      <header className="border-b border-border px-5 py-4">
+    <section className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+      <header className="border-b border-border px-4 py-4 sm:px-5">
         <h2 className="text-sm font-semibold text-foreground">Pipeline Value</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Open deals by stage
         </p>
       </header>
 
-      <div className="flex flex-1 flex-col p-5">
+      <div className="flex min-w-0 flex-1 flex-col p-4 sm:p-5">
         {loading || !data ? (
-          <Skeleton className="h-56 w-full" />
+          <Skeleton className="h-48 w-full sm:h-56" />
         ) : data.stages.length === 0 ? (
           <EmptyState
             icon={GitBranch}
@@ -35,19 +35,19 @@ export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
         ) : (
           <>
             <Donut data={data} currency={currency} />
-            <ul className="mt-5 space-y-2">
+            <ul className="mt-4 space-y-2 sm:mt-5">
               {data.stages.map((s) => (
-                <li key={s.id} className="flex items-center gap-3 text-xs">
+                <li key={s.id} className="flex min-w-0 items-center gap-2 text-xs sm:gap-3">
                   <span
-                    className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ background: s.color }}
                     aria-hidden
                   />
-                  <span className="flex-1 truncate text-muted-foreground">{s.name}</span>
-                  <span className="text-muted-foreground tabular-nums">
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{s.name}</span>
+                  <span className="shrink-0 text-muted-foreground tabular-nums">
                     {s.dealCount} deal{s.dealCount === 1 ? '' : 's'}
                   </span>
-                  <span className="w-20 text-right text-muted-foreground tabular-nums">
+                  <span className="w-16 shrink-0 text-right text-muted-foreground tabular-nums sm:w-20">
                     {formatCurrencyShort(s.totalValue, currency)}
                   </span>
                 </li>
@@ -96,7 +96,7 @@ function Donut({ data, currency }: { data: PipelineDonutData; currency: string }
 
   return (
     <div className="flex items-center justify-center">
-      <svg viewBox={`0 0 ${size} ${size}`} className="h-48 w-48" role="img" aria-label="Pipeline value by stage">
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-40 w-40 sm:h-48 sm:w-48" role="img" aria-label="Pipeline value by stage">
         {/* background ring */}
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--muted)" strokeWidth={ringWidth} />
         {segments.map((seg) => (

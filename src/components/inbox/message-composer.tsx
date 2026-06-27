@@ -18,15 +18,25 @@ import {
   Square,
   X,
   Loader2,
+  MapPin,
+  Navigation,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -36,6 +46,7 @@ import {
   MEDIA_MAX_BYTES_BY_KIND,
 } from "@/lib/storage/upload-media";
 import { ReplyQuote } from "./reply-quote";
+import { VoiceNotePlayer } from "./voice-note-player";
 
 /** Media content types an agent can send from the composer. */
 export type ComposerMediaKind = "image" | "video" | "document" | "audio";
@@ -49,6 +60,14 @@ export const MEDIA_CAPTION_MAX = 1024;
 /** Hard cap on a single voice recording so it can't blow the upload/
  *  transcode limits — auto-stops the recorder when reached. */
 const MAX_RECORDING_SECONDS = 5 * 60;
+
+export interface SendLocationPayload {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  replyToId?: string;
+}
 
 export interface SendMediaPayload {
   kind: ComposerMediaKind;
@@ -95,6 +114,7 @@ interface MessageComposerProps {
   sessionExpired: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
+  onSendLocation: (payload: SendLocationPayload) => void;
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
@@ -116,6 +136,7 @@ export function MessageComposer({
   sessionExpired,
   onSend,
   onSendMedia,
+  onSendLocation,
   onOpenTemplates,
   replyTo,
   onClearReply,
@@ -128,6 +149,8 @@ export function MessageComposer({
   // attachment; `busy` covers the upload/transcode window.
   const [draft, setDraft] = useState<MediaDraft | null>(null);
   const [busy, setBusy] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [locationOpen, setLocationOpen] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
@@ -378,7 +401,7 @@ export function MessageComposer({
   // ---- Render --------------------------------------------------------
 
   return (
-    <div className="border-t border-border bg-card p-3">
+    <div className="border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -448,68 +471,110 @@ export function MessageComposer({
         />
       ) : recording ? (
         // Recording bar — replaces the composer while the mic is live.
-        <div className="flex items-center gap-3 rounded-xl border border-border bg-muted px-4 py-2.5">
+        <div className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2.5 sm:gap-3 sm:px-4">
           <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
-          <span className="flex-1 text-sm text-foreground">
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground">
             Recording… {formatDuration(recordSeconds)} /{" "}
             {formatDuration(MAX_RECORDING_SECONDS)}
           </span>
           <button
             type="button"
             onClick={cancelRecording}
-            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-card hover:text-foreground"
+            className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-card hover:text-foreground"
           >
             Cancel
           </button>
           <Button
             size="sm"
             onClick={stopRecording}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90"
+            className="h-11 w-11 shrink-0 bg-primary p-0 hover:bg-primary/90 sm:h-9 sm:w-9"
             title="Stop and attach"
           >
             <Square className="h-4 w-4" />
           </Button>
         </div>
       ) : (
-        <div className="flex items-end gap-2">
-          {/* Attach menu — photo / video / document / voice. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              disabled={inputsDisabled || busy}
-              title={
-                readOnly
-                  ? "Read-only — your role can't send messages"
-                  : inputsDisabled
-                    ? undefined
-                    : "Attach media"
-              }
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Paperclip className="h-4 w-4" />
-              )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="border-border bg-popover">
-              <DropdownMenuItem onClick={() => imageInputRef.current?.click()}>
-                <ImageIcon className="mr-2 h-4 w-4" />
-                Photo
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => videoInputRef.current?.click()}>
-                <Video className="mr-2 h-4 w-4" />
-                Video
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
-                <FileText className="mr-2 h-4 w-4" />
-                Document
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => void startRecording()}>
-                <Mic className="mr-2 h-4 w-4" />
-                Voice note
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        <div className="flex items-end gap-1.5 sm:gap-2">
+          {/* WhatsApp Business-style attach sheet */}
+          <button
+            type="button"
+            disabled={inputsDisabled || busy}
+            title={
+              readOnly
+                ? "Read-only — your role can't send messages"
+                : inputsDisabled
+                  ? undefined
+                  : "Attach"
+            }
+            onClick={() => setAttachOpen(true)}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Paperclip className="h-4 w-4" />
+            )}
+          </button>
+
+          <Sheet open={attachOpen} onOpenChange={setAttachOpen}>
+            <SheetContent side="bottom" className="rounded-t-2xl pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <SheetHeader className="pb-2">
+                <SheetTitle>Send attachment</SheetTitle>
+              </SheetHeader>
+              <div className="grid grid-cols-4 gap-3 px-2 pb-2">
+                <AttachOption
+                  icon={ImageIcon}
+                  label="Photo"
+                  color="bg-violet-500"
+                  disabled={inputsDisabled || busy}
+                  onClick={() => {
+                    setAttachOpen(false);
+                    imageInputRef.current?.click();
+                  }}
+                />
+                <AttachOption
+                  icon={Video}
+                  label="Video"
+                  color="bg-rose-500"
+                  disabled={inputsDisabled || busy}
+                  onClick={() => {
+                    setAttachOpen(false);
+                    videoInputRef.current?.click();
+                  }}
+                />
+                <AttachOption
+                  icon={FileText}
+                  label="Document"
+                  color="bg-blue-500"
+                  disabled={inputsDisabled || busy}
+                  onClick={() => {
+                    setAttachOpen(false);
+                    documentInputRef.current?.click();
+                  }}
+                />
+                <AttachOption
+                  icon={MapPin}
+                  label="Location"
+                  color="bg-emerald-500"
+                  disabled={inputsDisabled || busy}
+                  onClick={() => {
+                    setAttachOpen(false);
+                    setLocationOpen(true);
+                  }}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <LocationSendDialog
+            open={locationOpen}
+            onOpenChange={setLocationOpen}
+            disabled={inputsDisabled || busy}
+            onSend={(loc) => {
+              onSendLocation({ ...loc, replyToId: replyTo?.id });
+              onClearReply?.();
+            }}
+          />
 
           <GatedButton
             variant="ghost"
@@ -517,7 +582,7 @@ export function MessageComposer({
             canAct={!readOnly}
             gateReason="send messages"
             title={readOnly ? undefined : "Send template"}
-            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            className="hidden h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground sm:inline-flex"
             onClick={onOpenTemplates}
           >
             <LayoutTemplate className="h-4 w-4" />
@@ -532,8 +597,8 @@ export function MessageComposer({
               readOnly
                 ? "Read-only — viewers can browse but not reply"
                 : sessionExpired
-                  ? "Session expired - use a template"
-                  : "Type a message... (Shift+Enter for new line)"
+                  ? "Session expired — use a template"
+                  : "Message…"
             }
             disabled={sessionExpired || readOnly}
             rows={1}
@@ -542,33 +607,244 @@ export function MessageComposer({
             // The placeholder text also surfaces the read-only state.
             title={readOnly ? "Read-only — your role can't send messages" : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
-              (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
+              "min-w-0 flex-1 resize-none rounded-xl border border-border bg-muted px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50 sm:px-4",
+              (sessionExpired || readOnly) && "cursor-not-allowed opacity-50",
             )}
           />
 
-          <GatedButton
-            size="sm"
-            canAct={!readOnly}
-            gateReason="send messages"
-            disabled={!text.trim() || sessionExpired || sending}
-            onClick={handleSend}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" />
-          </GatedButton>
+          {/* WhatsApp-style: mic when empty, send when there's text. */}
+          {text.trim() ? (
+            <GatedButton
+              size="sm"
+              canAct={!readOnly}
+              gateReason="send messages"
+              disabled={sessionExpired || sending}
+              onClick={handleSend}
+              title="Send message"
+              className="h-11 w-11 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40 sm:h-9 sm:w-9"
+            >
+              <Send className="h-5 w-5 sm:h-4 sm:w-4" />
+            </GatedButton>
+          ) : (
+            <GatedButton
+              size="sm"
+              canAct={!readOnly}
+              gateReason="send messages"
+              disabled={inputsDisabled || busy || sending}
+              onClick={() => void startRecording()}
+              title="Voice note"
+              className="h-11 w-11 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40 sm:h-9 sm:w-9"
+            >
+              <Mic className="h-5 w-5 sm:h-4 sm:w-4" />
+            </GatedButton>
+          )}
         </div>
       )}
 
       {/* Hint sits outside the flex row so its height doesn't push
           `items-end` buttons below the textarea. Indented to line up
-          under the textarea left edge. */}
+          under the textarea left edge. Hidden on the smallest screens
+          where horizontal space is tight. */}
       {!draft && !recording && (
-        <p className="mt-1 pl-[5.5rem] text-[10px] text-muted-foreground">
-          Type &apos;/&apos; for quick replies
+        <p className="mt-1 hidden pl-12 text-[10px] text-muted-foreground sm:block sm:pl-[5.5rem]">
+          Shift+Enter for new line · type &apos;/&apos; for quick replies
         </p>
       )}
     </div>
+  );
+}
+
+function AttachOption({
+  icon: Icon,
+  label,
+  color,
+  disabled,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  color: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex flex-col items-center gap-2 rounded-xl p-2 disabled:opacity-40"
+    >
+      <span
+        className={cn(
+          "flex h-14 w-14 items-center justify-center rounded-full text-white shadow-sm",
+          color,
+        )}
+      >
+        <Icon className="h-6 w-6" />
+      </span>
+      <span className="text-xs font-medium text-foreground">{label}</span>
+    </button>
+  );
+}
+
+function LocationSendDialog({
+  open,
+  onOpenChange,
+  disabled,
+  onSend,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  disabled?: boolean;
+  onSend: (loc: Omit<SendLocationPayload, "replyToId">) => void;
+}) {
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [locating, setLocating] = useState(false);
+
+  const resetForm = useCallback(() => {
+    setLatitude("");
+    setLongitude("");
+    setName("");
+    setAddress("");
+    setLocating(false);
+  }, []);
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) resetForm();
+      onOpenChange(next);
+    },
+    [onOpenChange, resetForm],
+  );
+
+  const useCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast.error("Location is not supported in this browser.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLatitude(pos.coords.latitude.toFixed(6));
+        setLongitude(pos.coords.longitude.toFixed(6));
+        setLocating(false);
+      },
+      () => {
+        toast.error("Could not get your location. Check permissions.");
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000 },
+    );
+  }, []);
+
+  const handleSend = useCallback(() => {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      toast.error("Enter valid latitude and longitude.");
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      toast.error("Coordinates are out of range.");
+      return;
+    }
+    onSend({
+      latitude: lat,
+      longitude: lng,
+      name: name.trim() || undefined,
+      address: address.trim() || undefined,
+    });
+    resetForm();
+    onOpenChange(false);
+  }, [latitude, longitude, name, address, onSend, onOpenChange, resetForm]);
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Send location</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={disabled || locating}
+            onClick={useCurrentLocation}
+          >
+            {locating ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Navigation className="mr-2 h-4 w-4" />
+            )}
+            Use my current location
+          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Latitude
+              </label>
+              <Input
+                value={latitude}
+                onChange={(e) => setLatitude(e.target.value)}
+                placeholder="23.8103"
+                inputMode="decimal"
+                disabled={disabled}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Longitude
+              </label>
+              <Input
+                value={longitude}
+                onChange={(e) => setLongitude(e.target.value)}
+                placeholder="90.4125"
+                inputMode="decimal"
+                disabled={disabled}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Name (optional)
+            </label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Store name"
+              disabled={disabled}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Address (optional)
+            </label>
+            <Input
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Street, city"
+              disabled={disabled}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => handleOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" disabled={disabled} onClick={handleSend}>
+            Send location
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -609,7 +885,11 @@ function MediaDraftPreview({
             <video src={draft.mediaUrl} controls className="max-h-40 rounded-lg" />
           )}
           {draft.kind === "audio" && (
-            <audio src={draft.mediaUrl} controls className="w-full" />
+            <VoiceNotePlayer
+              src={draft.mediaUrl}
+              variant="outbound"
+              seed={draft.path}
+            />
           )}
           {draft.kind === "document" && (
             <div className="flex items-center gap-2 text-sm text-foreground">
@@ -651,11 +931,11 @@ function MediaDraftPreview({
           disabled={busy}
           onClick={onSend}
           className={cn(
-            "h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40",
+            "h-11 w-11 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40 sm:h-9 sm:w-9",
             draft.kind === "audio" && "ml-auto",
           )}
         >
-          <Send className="h-4 w-4" />
+          <Send className="h-5 w-5 sm:h-4 sm:w-4" />
         </GatedButton>
       </div>
     </div>

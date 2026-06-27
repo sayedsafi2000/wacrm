@@ -46,34 +46,35 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
   }, [data])
 
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
-      <header className="flex items-center justify-between border-b border-border px-5 py-4">
-        <div>
+    <section className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+      <header className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground">Conversations Over Time</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">Daily message volume by direction</p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
+        <div className="flex w-full shrink-0 items-center gap-1 self-start rounded-lg bg-muted/60 p-1 sm:w-auto">
           {[7, 30, 90].map((r) => (
             <button
               key={r}
               type="button"
               onClick={() => onRangeChange(r as RangeDays)}
               className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors sm:flex-none sm:px-2.5',
                 range === r
                   ? 'bg-secondary text-secondary-foreground'
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {r} days
+              <span className="sm:hidden">{r}d</span>
+              <span className="hidden sm:inline">{r} days</span>
             </button>
           ))}
         </div>
       </header>
 
-      <div className="p-5">
+      <div className="min-w-0 p-4 sm:p-5">
         {loading || !data ? (
-          <Skeleton className="h-[240px] w-full" />
+          <Skeleton className="h-[200px] w-full sm:h-[240px]" />
         ) : data.every((p) => p.incoming === 0 && p.outgoing === 0) ? (
           <EmptyState
             icon={MessageSquare}
@@ -85,7 +86,7 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
         )}
       </div>
 
-      <footer className="flex items-center gap-4 border-t border-border px-5 py-3 text-xs text-muted-foreground">
+      <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-4 py-3 text-xs text-muted-foreground sm:px-5">
         <LegendDot color="#3b82f6" label="Incoming" />
         <LegendDot color="#7c3aed" label="Outgoing" />
       </footer>
@@ -114,17 +115,35 @@ function LineSvg({
   const [hover, setHover] = useState<{ idx: number; tooltipLeftPx: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(VB_W)
 
-  const chartW = VB_W - PADDING.left - PADDING.right
-  const chartH = VB_H - PADDING.top - PADDING.bottom
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    setContainerWidth(el.getBoundingClientRect().width)
+    return () => ro.disconnect()
+  }, [])
+
+  const maxLabels =
+    containerWidth < 360 ? 3 : containerWidth < 480 ? 4 : containerWidth < 640 ? 5 : 6
+  const labelStride = Math.max(1, Math.ceil(data.length / maxLabels))
+  const rotateLabels = containerWidth < 420 && data.length > 7
+  const paddingBottom = rotateLabels ? 44 : 28
+  const padding = { ...PADDING, bottom: paddingBottom }
+  const chartW = VB_W - padding.left - padding.right
+  const chartH = VB_H - padding.top - padding.bottom
 
   // x step can be fractional for 90-day views; points are positioned
   // at the center of each "slot" so the first and last points don't
   // sit right on the axis.
   const stepX = data.length > 1 ? chartW / (data.length - 1) : 0
   const yFor = (v: number) =>
-    maxY === 0 ? PADDING.top + chartH : PADDING.top + chartH - (v / maxY) * chartH
-  const xFor = (i: number) => PADDING.left + i * stepX
+    maxY === 0 ? padding.top + chartH : padding.top + chartH - (v / maxY) * chartH
+  const xFor = (i: number) => padding.left + i * stepX
 
   const incomingPath = data.map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i)},${yFor(p.incoming)}`).join(' ')
   const outgoingPath = data.map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i)},${yFor(p.outgoing)}`).join(' ')
@@ -149,11 +168,11 @@ function LineSvg({
       pt.y = e.clientY
       const local = pt.matrixTransform(ctm.inverse())
       const xVb = local.x
-      if (xVb < PADDING.left - 8 || xVb > VB_W - PADDING.right + 8) {
+      if (xVb < padding.left - 8 || xVb > VB_W - padding.right + 8) {
         setHover(null)
         return
       }
-      const relative = xVb - PADDING.left
+      const relative = xVb - padding.left
       const idx = Math.max(
         0,
         Math.min(data.length - 1, Math.round(stepX === 0 ? 0 : relative / stepX)),
@@ -163,7 +182,7 @@ function LineSvg({
       // the absolutely-positioned tooltip div consumes. `xFor` is
       // inlined here so the effect deps stay stable (it's a closure
       // that'd otherwise be a new reference every render).
-      const dataPointVbX = PADDING.left + idx * stepX
+      const dataPointVbX = padding.left + idx * stepX
       const dataPointPt = svg.createSVGPoint()
       dataPointPt.x = dataPointVbX
       dataPointPt.y = 0
@@ -179,21 +198,17 @@ function LineSvg({
       svg.removeEventListener('mouseleave', onLeave)
     }
     // xFor + yFor close over stepX, so stepX covers them.
-  }, [data, stepX])
+  }, [data, stepX, padding.left, padding.right])
 
   const hovered = hover !== null ? data[hover.idx] : null
   const hoverX = hover !== null ? xFor(hover.idx) : 0
 
-  // X-axis label strategy: show ~6 evenly-spaced labels regardless
-  // of range so the axis never looks crowded.
-  const labelStride = Math.max(1, Math.ceil(data.length / 6))
-
   return (
-    <div ref={wrapRef} className="relative w-full">
+    <div ref={wrapRef} className="relative min-w-0 w-full">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VB_W} ${VB_H}`}
-        className="h-[240px] w-full"
+        className="h-[200px] w-full sm:h-[240px]"
         role="img"
         aria-label="Conversations per day"
       >
@@ -203,15 +218,15 @@ function LineSvg({
           return (
             <g key={t}>
               <line
-                x1={PADDING.left}
-                x2={VB_W - PADDING.right}
+                x1={padding.left}
+                x2={VB_W - padding.right}
                 y1={y}
                 y2={y}
                 stroke="var(--border)"
                 strokeDasharray="3 3"
               />
               <text
-                x={PADDING.left - 8}
+                x={padding.left - 8}
                 y={y}
                 textAnchor="end"
                 dominantBaseline="middle"
@@ -223,17 +238,18 @@ function LineSvg({
           )
         })}
 
-        {/* X-axis labels */}
+        {/* X-axis labels — fewer on narrow screens; rotate when cramped */}
         {data.map((p, i) =>
           i % labelStride === 0 ? (
             <text
               key={p.day}
               x={xFor(i)}
-              y={VB_H - 8}
-              textAnchor="middle"
+              y={VB_H - (rotateLabels ? 6 : 8)}
+              textAnchor={rotateLabels ? 'end' : 'middle'}
+              transform={rotateLabels ? `rotate(-35, ${xFor(i)}, ${VB_H - 6})` : undefined}
               className="fill-muted-foreground text-[10px]"
             >
-              {shortDayLabel(p.day)}
+              {shortDayLabel(p.day, containerWidth < 480)}
             </text>
           ) : null,
         )}
@@ -263,8 +279,8 @@ function LineSvg({
             <line
               x1={hoverX}
               x2={hoverX}
-              y1={PADDING.top}
-              y2={PADDING.top + chartH}
+              y1={padding.top}
+              y2={padding.top + chartH}
               stroke="var(--muted-foreground)"
               strokeDasharray="3 3"
             />
@@ -309,11 +325,12 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   )
 }
 
-function shortDayLabel(key: string): string {
-  // key is YYYY-MM-DD; return "Apr 17"-style. Using Date with an
-  // appended time avoids timezone-shift surprises across midnight.
+function shortDayLabel(key: string, compact = false): string {
   const [y, m, d] = key.split('-').map(Number)
   const date = new Date(y, m - 1, d)
+  if (compact) {
+    return date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
+  }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 

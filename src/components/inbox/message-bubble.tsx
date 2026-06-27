@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
@@ -8,15 +7,27 @@ import {
   Check,
   CheckCheck,
   XCircle,
-  FileText,
   MapPin,
   LayoutTemplate,
-  ImageOff,
   CornerDownLeft,
+  Ban,
+  ExternalLink,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
+import { isMessageDeleted } from "@/lib/inbox/message-delete";
+import {
+  mapsUrl,
+  parseLocationContent,
+  locationPreviewLabel,
+} from "@/lib/inbox/location-message";
+import {
+  ChatMediaAudio,
+  ChatMediaDocument,
+  ChatMediaImage,
+  ChatMediaVideo,
+} from "./chat-media";
 
 interface MessageBubbleProps {
   message: Message;
@@ -27,96 +38,42 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
 }
 
+/** WhatsApp Web bubble palette — independent of the app accent theme. */
+const OUTBOUND_BUBBLE =
+  "bg-[#D9FDD3] text-[#111B21] dark:bg-[#005C4B] dark:text-[#E9EDEF]";
+const INBOUND_BUBBLE =
+  "bg-white text-[#111B21] shadow-sm dark:bg-[#202C33] dark:text-[#E9EDEF]";
+/** Pending/delivered ticks + timestamps on outbound bubbles. */
+const OUTBOUND_META = "text-[#667781] dark:text-white/60";
+/** WhatsApp read-receipt blue — visible on both light and dark green bubbles. */
+const READ_TICK = "text-[#53BDEB]";
+
 function StatusIcon({ status }: { status: Message["status"] }) {
   switch (status) {
     case "sending":
-      return <Clock className="h-3 w-3 text-muted-foreground" />;
+      return <Clock className={cn("h-3 w-3", OUTBOUND_META)} />;
     case "sent":
-      return <Check className="h-3 w-3 text-muted-foreground" />;
+      return <Check className={cn("h-3 w-3", OUTBOUND_META)} />;
     case "delivered":
-      return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+      return <CheckCheck className={cn("h-3 w-3", OUTBOUND_META)} />;
     case "read":
-      return <CheckCheck className="h-3 w-3 text-blue-400" />;
+      return <CheckCheck className={cn("h-3 w-3", READ_TICK)} />;
     case "failed":
-      return <XCircle className="h-3 w-3 text-red-400" />;
+      return <XCircle className="h-3 w-3 text-red-500" />;
     default:
       return null;
   }
 }
 
-function MediaUnavailable({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-      <ImageOff className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span>{label} unavailable</span>
-    </div>
-  );
-}
-
-function MediaImage({ url, alt }: { url: string; alt: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  const loadImage = useCallback(async () => {
-    if (!url) return;
-
-    // Proxy URLs need auth fetch to create blob URL
-    if (url.startsWith("/api/whatsapp/media/")) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Failed to load media");
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        setSrc(blobUrl);
-      } catch {
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      setSrc(url);
-      setLoading(false);
-    }
-  }, [url]);
-
-  useEffect(() => {
-    loadImage();
-    return () => {
-      if (src?.startsWith("blob:")) {
-        URL.revokeObjectURL(src);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadImage]);
-
-  if (error) {
-    return (
-      <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
-        <ImageOff className="h-8 w-8 text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src ?? ""}
-      alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
-    />
-  );
-}
-
-function MessageContent({ message }: { message: Message }) {
+function MessageContent({
+  message,
+  isAgent,
+  time,
+}: {
+  message: Message
+  isAgent: boolean
+  time: string
+}) {
   switch (message.content_type) {
     case "text":
       return (
@@ -129,9 +86,13 @@ function MessageContent({ message }: { message: Message }) {
       return (
         <div>
           {message.media_url ? (
-            <MediaImage url={message.media_url} alt="Shared image" />
+            <ChatMediaImage
+              url={message.media_url}
+              alt="Shared image"
+              downloadName={`image-${message.id.slice(0, 8)}.jpg`}
+            />
           ) : (
-            <MediaUnavailable label="Image" />
+            <p className="text-xs text-muted-foreground">Image unavailable</p>
           )}
           {message.content_text && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
@@ -145,13 +106,12 @@ function MessageContent({ message }: { message: Message }) {
       return (
         <div>
           {message.media_url ? (
-            <video
-              src={message.media_url}
-              controls
-              className="max-h-64 max-w-60 rounded-lg"
+            <ChatMediaVideo
+              url={message.media_url}
+              downloadName={`video-${message.id.slice(0, 8)}.mp4`}
             />
           ) : (
-            <MediaUnavailable label="Video" />
+            <p className="text-xs text-muted-foreground">Video unavailable</p>
           )}
           {message.content_text && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
@@ -165,29 +125,43 @@ function MessageContent({ message }: { message: Message }) {
       return (
         <div>
           {message.media_url ? (
-            <audio src={message.media_url} controls className="max-w-60" />
+            <ChatMediaAudio
+              url={message.media_url}
+              variant={isAgent ? "outbound" : "inbound"}
+              seed={message.id}
+              footer={
+                <>
+                  <span
+                    className={cn(
+                      "text-[10px] tabular-nums",
+                      isAgent ? OUTBOUND_META : "text-muted-foreground",
+                    )}
+                  >
+                    {time}
+                  </span>
+                  {isAgent && <StatusIcon status={message.status} />}
+                </>
+              }
+            />
           ) : (
-            <MediaUnavailable label="Audio" />
+            <p className="text-xs text-muted-foreground">Voice message unavailable</p>
           )}
         </div>
       );
 
     case "document":
       if (!message.media_url) {
-        return <MediaUnavailable label={message.content_text || "Document"} />;
+        return (
+          <p className="text-xs text-muted-foreground">
+            {message.content_text || "Document unavailable"}
+          </p>
+        );
       }
       return (
-        <a
-          href={message.media_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
-        >
-          <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
-          <span className="truncate">
-            {message.content_text || "Document"}
-          </span>
-        </a>
+        <ChatMediaDocument
+          url={message.media_url}
+          label={message.content_text || "Document"}
+        />
       );
 
     case "template":
@@ -205,20 +179,37 @@ function MessageContent({ message }: { message: Message }) {
         </div>
       );
 
-    case "location":
+    case "location": {
+      const loc = parseLocationContent(message.content_text);
+      const label = loc ? locationPreviewLabel(loc) : "Location shared";
+      const href = loc ? mapsUrl(loc) : null;
       return (
-        <div className="flex items-center gap-2 text-sm">
-          <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span>{message.content_text || "Location shared"}</span>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-start gap-2 text-sm">
+            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+            <div className="min-w-0">
+              <p className="font-medium">{label}</p>
+              {loc?.address && loc.name && loc.address !== loc.name && (
+                <p className="text-xs text-muted-foreground">{loc.address}</p>
+              )}
+            </div>
+          </div>
+          {href && (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-muted/50 px-3 py-2 text-xs font-medium hover:bg-muted"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open in Google Maps
+            </a>
+          )}
         </div>
       );
+    }
 
     case "interactive": {
-      // Customer tapped a reply button or list row on a message the bot
-      // sent. We show the tapped option's title (already in content_text,
-      // set by parseMessageContent in the webhook) with a small affordance
-      // so agents reading the inbox can tell at a glance that this is a
-      // tap rather than the customer typing the same words.
       return (
         <div className="flex flex-col gap-0.5">
           <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -250,6 +241,8 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
+  const deleted = isMessageDeleted(message);
+  const isAudio = message.content_type === "audio" && !deleted;
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
   // group matches the bubble's content area, not the full row.
@@ -260,12 +253,25 @@ export function MessageBubble({
         isAgent ? "items-end" : "items-start",
       )}
     >
+      {deleted ? (
+        <div
+          className={cn(
+            "flex max-w-[75%] items-center gap-1.5 rounded-lg px-3 py-2 text-xs italic text-muted-foreground",
+            isAgent ? "rounded-br-md bg-muted/60" : "rounded-bl-md bg-muted/40",
+          )}
+        >
+          <Ban className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          <span>This message was deleted</span>
+          <span className="ml-1 text-[10px] not-italic opacity-60">{time}</span>
+        </div>
+      ) : (
       <div
         className={cn(
-          "relative rounded-2xl px-3 py-2",
+          "relative rounded-2xl",
+          isAudio ? "px-2 py-1.5" : "px-3 py-2",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted text-foreground",
+            ? cn("rounded-br-md", OUTBOUND_BUBBLE)
+            : cn("rounded-bl-md", INBOUND_BUBBLE),
         )}
       >
         {reply && (
@@ -275,7 +281,8 @@ export function MessageBubble({
             onPrimary={isAgent}
           />
         )}
-        <MessageContent message={message} />
+        <MessageContent message={message} isAgent={isAgent} time={time} />
+        {!isAudio && (
         <div
           className={cn(
             "mt-1 flex items-center gap-1",
@@ -285,19 +292,17 @@ export function MessageBubble({
           <span
             className={cn(
               "text-[10px]",
-              // Outbound bubbles sit on the primary fill, so the
-              // timestamp must read against that (not the neutral
-              // foreground) — otherwise it goes low-contrast in light
-              // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
+              isAgent ? OUTBOUND_META : "text-muted-foreground",
             )}
           >
             {time}
           </span>
           {isAgent && <StatusIcon status={message.status} />}
         </div>
+        )}
       </div>
-      {reactions && reactions.length > 0 && onToggleReaction && (
+      )}
+      {!deleted && reactions && reactions.length > 0 && onToggleReaction && (
         <MessageReactions
           reactions={reactions}
           currentUserId={currentUserId}

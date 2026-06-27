@@ -142,6 +142,15 @@ function LoginPageInner() {
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
+            <Link
+              href="/link-device"
+              className="block text-[#008069] hover:underline dark:text-[#25D366]"
+            >
+              Link with code instead
+            </Link>
+          </p>
+
+          <p className="mt-4 text-center text-sm text-muted-foreground">
             Don&apos;t have an account?{" "}
             <Link
               href={

@@ -98,6 +98,9 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  /** WhatsApp-style "About" status (CRM-managed). */
+  status_text?: string | null;
+  status_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +161,34 @@ export interface Conversation {
   contact?: Contact;
 }
 
+export type StatusContentType = 'text' | 'image' | 'video';
+
+export interface StatusUpdate {
+  id: string;
+  account_id: string;
+  author_id: string;
+  content_type: StatusContentType;
+  content_text?: string | null;
+  media_url?: string | null;
+  background_color?: string | null;
+  created_at: string;
+  expires_at: string;
+  author?: Pick<Profile, 'full_name' | 'avatar_url' | 'email'>;
+}
+
+export interface WhatsAppChannel {
+  id: string;
+  account_id: string;
+  name: string;
+  description?: string | null;
+  invite_link?: string | null;
+  follower_count: number;
+  is_active: boolean;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type SenderType = 'customer' | 'agent' | 'bot';
 export type ContentType =
   | 'text'
@@ -191,6 +222,9 @@ export interface Message {
    * cue (renders with a "↩ button reply" affordance).
    */
   interactive_reply_id?: string;
+  /** Set when deleted for everyone — content is cleared server-side. */
+  deleted_at?: string | null;
+  deleted_by?: string | null;
 }
 
 export type ReactionActor = 'customer' | 'agent';

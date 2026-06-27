@@ -68,9 +68,11 @@ const THEME_BOOT_SCRIPT = `
     var MODES = ${JSON.stringify(MODES)};
     var savedMode = localStorage.getItem(MODE_KEY);
     d.dataset.mode = MODES.indexOf(savedMode) !== -1 ? savedMode : MODE_DEFAULT;
+    d.classList.toggle('dark', d.dataset.mode === 'dark');
   } catch (_e) {
     d.dataset.theme = ${JSON.stringify(DEFAULT_THEME)};
     d.dataset.mode = ${JSON.stringify(DEFAULT_MODE)};
+    d.classList.toggle('dark', d.dataset.mode === 'dark');
   }
 })();
 `;
@@ -85,7 +87,7 @@ export default function RootLayout({
       lang="en"
       data-theme={DEFAULT_THEME}
       data-mode={DEFAULT_MODE}
-      className={`${inter.variable} h-full antialiased`}
+      className={`${inter.variable} h-full antialiased${DEFAULT_MODE === "dark" ? " dark" : ""}`}
       // The `theme-boot` script below rewrites `data-theme` and
       // `data-mode` on <html> from localStorage before React hydrates,
       // so for any non-default choice the client DOM intentionally
@@ -102,7 +104,15 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
       </head>
-      <body className="min-h-full bg-background text-foreground font-sans">
+      {/* Browser extensions (Grammarly, etc.) inject attributes like
+          data-gr-ext-installed / data-new-gr-c-s-check-loaded onto
+          <body> before React hydrates, causing a benign hydration
+          mismatch. suppressHydrationWarning silences only this
+          element's own attribute diff; child mismatches still surface. */}
+      <body
+        className="min-h-full bg-background text-foreground font-sans"
+        suppressHydrationWarning
+      >
         <ThemeProvider>
           {children}
           <ThemedToaster />

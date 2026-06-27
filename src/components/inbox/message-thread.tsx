@@ -26,6 +26,8 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Phone,
+  Video,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -43,8 +45,13 @@ import {
   MessageComposer,
   CHAT_MEDIA_BUCKET,
   type SendMediaPayload,
+  type SendLocationPayload,
 } from "./message-composer";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { formatPhoneDisplay, hasRecentStatus } from "@/lib/contacts/display";
+import { whatsAppChatUrl } from "@/lib/whatsapp/deep-link";
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
+import { formatLocationContent } from "@/lib/inbox/location-message";
 import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
@@ -69,6 +76,7 @@ interface MessageThreadProps {
   onMessagesLoaded: (messages: Message[]) => void;
   onNewMessage: (message: Message) => void;
   onUpdateMessage: (id: string, updates: Partial<Message>) => void;
+  onRemoveMessage: (id: string) => void;
   onStatusChange: (conversationId: string, status: ConversationStatus) => void;
   onAssignChange: (
     conversationId: string,
@@ -148,7 +156,7 @@ const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string 
  * if we ever switch the asset, both spots update together.
  */
 const DOODLE_BG_CLASSES =
-  "bg-background bg-[url('/inbox-doodle.svg')] bg-repeat";
+  "bg-[#ECE5DD] bg-[url('/inbox-doodle.svg')] bg-repeat dark:bg-[#0B141A] dark:bg-[url('/inbox-doodle.svg')]";
 
 export function MessageThread({
   conversation,
@@ -157,6 +165,7 @@ export function MessageThread({
   onMessagesLoaded,
   onNewMessage,
   onUpdateMessage,
+  onRemoveMessage,
   onStatusChange,
   onAssignChange,
   onBack,
@@ -274,18 +283,37 @@ export function MessageThread({
     (async () => {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+
+      const [msgRes, hideRes] = await Promise.all([
+        supabase
+          .from("messages")
+          .select("*")
+          .eq("conversation_id", conversationId)
+          .order("created_at", { ascending: true }),
+        userId
+          ? supabase
+              .from("message_user_hides")
+              .select("message_id")
+              .eq("user_id", userId)
+          : Promise.resolve({ data: [] as { message_id: string }[], error: null }),
+      ]);
 
       if (cancelled) return;
 
-      if (error) {
-        console.error("Failed to fetch messages:", error);
+      if (msgRes.error) {
+        console.error("Failed to fetch messages:", msgRes.error);
       } else {
-        onMessagesLoadedRef.current(data ?? []);
+        const hidden = new Set(
+          (hideRes.data ?? []).map((h) => h.message_id),
+        );
+        const visible = (msgRes.data ?? []).filter(
+          (m) => !hidden.has(m.id),
+        ) as Message[];
+        onMessagesLoadedRef.current(visible);
       }
 
       if (!cancelled) setLoading(false);
@@ -561,6 +589,61 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage],
   );
 
+  const handleSendLocation = useCallback(
+    async (payload: SendLocationPayload) => {
+      if (!conversation) return;
+
+      const contentText = formatLocationContent(payload);
+      const tempId = `temp-${Date.now()}`;
+      const optimisticMsg: Message = {
+        id: tempId,
+        conversation_id: conversation.id,
+        sender_type: "agent",
+        content_type: "location",
+        content_text: contentText,
+        status: "sending",
+        created_at: new Date().toISOString(),
+        reply_to_message_id: payload.replyToId,
+      };
+      onNewMessage(optimisticMsg);
+      setReplyTo(null);
+
+      try {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversation.id,
+            message_type: "location",
+            latitude: payload.latitude,
+            longitude: payload.longitude,
+            location_name: payload.name,
+            location_address: payload.address,
+            reply_to_message_id: payload.replyToId,
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const reason = data?.error || `HTTP ${res.status}`;
+          console.error("Failed to send location:", reason);
+          toast.error(`Failed to send: ${reason}`);
+          onUpdateMessage(tempId, { status: "failed" });
+          return;
+        }
+
+        onUpdateMessage(tempId, { status: "sent" });
+      } catch (err) {
+        console.error("Failed to send location:", err);
+        const reason = err instanceof Error ? err.message : "network error";
+        toast.error(`Failed to send: ${reason}`);
+        onUpdateMessage(tempId, { status: "failed" });
+      }
+    },
+    [conversation, onNewMessage, onUpdateMessage],
+  );
+
   const handleStatusChange = useCallback(
     async (status: ConversationStatus) => {
       if (!conversation) return;
@@ -691,6 +774,37 @@ export function MessageThread({
       });
     },
     [authorLabelFor],
+  );
+
+  const handleDeleteMessage = useCallback(
+    async (messageId: string, scope: "me" | "everyone") => {
+      const res = await fetch(`/api/whatsapp/messages/${messageId}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        deleted_at?: string;
+      };
+      if (!res.ok) {
+        toast.error(payload.error || "Failed to delete message");
+        throw new Error(payload.error || "delete failed");
+      }
+      if (scope === "me") {
+        onRemoveMessage(messageId);
+        toast.success("Message deleted for you");
+      } else {
+        onUpdateMessage(messageId, {
+          deleted_at: payload.deleted_at ?? new Date().toISOString(),
+          content_text: undefined,
+          media_url: undefined,
+          template_name: undefined,
+        });
+        toast.success("Message deleted for everyone");
+      }
+    },
+    [onRemoveMessage, onUpdateMessage],
   );
 
   // Single reaction-set primitive. emoji === "" removes; otherwise adds/swaps.
@@ -834,12 +948,18 @@ export function MessageThread({
               <ArrowLeft className="h-5 w-5" />
             </button>
           )}
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-            {displayName.charAt(0).toUpperCase()}
-          </div>
+          <ContactAvatar
+            name={contact.name}
+            phone={contact.phone}
+            avatarUrl={contact.avatar_url}
+            showStatusRing={hasRecentStatus(contact.status_updated_at)}
+            size="sm"
+          />
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
-            <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {contact.status_text?.trim() || formatPhoneDisplay(contact.phone)}
+            </p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
               the name + back arrow keep their room. */}
@@ -855,7 +975,26 @@ export function MessageThread({
           </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => window.open(whatsAppChatUrl(contact.phone), "_blank", "noopener,noreferrer")}
+            aria-label="Voice call via WhatsApp app"
+            title="Call via WhatsApp app"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#008069] transition-colors hover:bg-muted sm:h-9 sm:w-9"
+          >
+            <Phone className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => window.open(whatsAppChatUrl(contact.phone), "_blank", "noopener,noreferrer")}
+            aria-label="Video call via WhatsApp app"
+            title="Video call via WhatsApp app"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#008069] transition-colors hover:bg-muted sm:h-9 sm:w-9"
+          >
+            <Video className="h-5 w-5" />
+          </button>
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just
@@ -1052,6 +1191,7 @@ export function MessageThread({
                         onReact={(emoji) => {
                           if (emoji) void postReaction(msg.id, emoji);
                         }}
+                        onDelete={(scope) => handleDeleteMessage(msg.id, scope)}
                       >
                         <MessageBubble
                           message={msg}
@@ -1076,6 +1216,7 @@ export function MessageThread({
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
+        onSendLocation={handleSendLocation}
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}

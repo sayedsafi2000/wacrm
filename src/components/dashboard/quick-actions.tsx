@@ -31,12 +31,12 @@ export function QuickActions() {
           <Link
             key={a.href}
             href={a.href}
-            className="group flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-border hover:bg-muted/60"
+            className="group flex min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 py-3 transition-colors hover:border-border hover:bg-muted/60 sm:gap-3 sm:px-4"
           >
-            <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-muted ${a.tint}`}>
+            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted ${a.tint}`}>
               <Icon className="h-4 w-4" />
             </div>
-            <span className="text-sm font-medium text-foreground">{a.label}</span>
+            <span className="truncate text-sm font-medium text-foreground">{a.label}</span>
           </Link>
         )
       })}

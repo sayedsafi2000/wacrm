@@ -18,7 +18,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { ContactAvatar } from '@/components/contacts/contact-avatar';
+import { formatPhoneDisplay } from '@/lib/contacts/display';
+import { uploadAccountMedia } from '@/lib/storage/upload-media';
+import { useCan } from '@/hooks/use-can';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -33,7 +36,10 @@ import {
   Save,
   X,
   DollarSign,
+  Camera,
 } from 'lucide-react';
+
+const CONTACT_AVATAR_BUCKET = 'contact-avatars';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -50,16 +56,19 @@ export function ContactDetailView({
 }: ContactDetailViewProps) {
   const supabase = createClient();
   const { accountId, defaultCurrency } = useAuth();
+  const canEdit = useCan('send-messages');
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   // Details tab
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editCompany, setEditCompany] = useState('');
+  const [editStatus, setEditStatus] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
 
   // Tags tab
@@ -99,6 +108,7 @@ export function ContactDetailView({
       setEditPhone(data.phone);
       setEditEmail(data.email ?? '');
       setEditCompany(data.company ?? '');
+      setEditStatus(data.status_text ?? '');
     }
     setLoading(false);
   }, [contactId, supabase]);
@@ -190,6 +200,10 @@ export function ContactDetailView({
     }
 
     setSavingDetails(true);
+    const trimmedStatus = editStatus.trim();
+    const statusChanged =
+      trimmedStatus !== (contact?.status_text?.trim() ?? '');
+
     const { error } = await supabase
       .from('contacts')
       .update({
@@ -197,6 +211,10 @@ export function ContactDetailView({
         phone: editPhone.trim(),
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
+        status_text: trimmedStatus || null,
+        status_updated_at: statusChanged
+          ? new Date().toISOString()
+          : contact?.status_updated_at ?? null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', contactId);
@@ -209,6 +227,34 @@ export function ContactDetailView({
       onUpdated();
     }
     setSavingDetails(false);
+  }
+
+  async function handleAvatarUpload(file: File) {
+    if (!contactId || !accountId || !canEdit) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5 MB.');
+      return;
+    }
+    setUploadingAvatar(true);
+    try {
+      const { publicUrl } = await uploadAccountMedia(CONTACT_AVATAR_BUCKET, file);
+      const { error } = await supabase
+        .from('contacts')
+        .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
+        .eq('id', contactId);
+      if (error) throw error;
+      toast.success('Profile photo updated');
+      fetchContact();
+      onUpdated();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingAvatar(false);
+    }
   }
 
   async function toggleTag(tagId: string) {
@@ -317,16 +363,6 @@ export function ContactDetailView({
     setSavingCustom(false);
   }
 
-  function getInitials(name?: string | null) {
-    if (!name) return '?';
-    return name
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  }
-
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -342,17 +378,46 @@ export function ContactDetailView({
             {/* Header */}
             <SheetHeader className="p-4 border-b border-border/50">
               <div className="flex items-center gap-3">
-                <Avatar className="size-12 bg-muted border border-border">
-                  <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
-                    {getInitials(contact.name)}
-                  </AvatarFallback>
-                </Avatar>
+                <div className="relative">
+                  <ContactAvatar
+                    name={contact.name}
+                    phone={contact.phone}
+                    avatarUrl={contact.avatar_url}
+                    showStatusRing={!!contact.status_text?.trim()}
+                    size="lg"
+                  />
+                  {canEdit && (
+                    <label className="absolute -bottom-1 -right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border bg-card shadow-sm">
+                      {uploadingAvatar ? (
+                        <Loader2 className="size-4 animate-spin text-primary" />
+                      ) : (
+                        <Camera className="size-4 text-muted-foreground" />
+                      )}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="sr-only"
+                        disabled={uploadingAvatar}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void handleAvatarUpload(f);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
                 <div className="flex-1 min-w-0">
                   <SheetTitle className="text-popover-foreground truncate">
                     {contact.name || 'Unknown'}
                   </SheetTitle>
+                  {contact.status_text?.trim() && (
+                    <p className="mt-0.5 truncate text-sm text-[#667781]">
+                      {contact.status_text}
+                    </p>
+                  )}
                   <SheetDescription className="text-muted-foreground text-xs mt-0.5">
-                    Contact details
+                    {formatPhoneDisplay(contact.phone)}
                   </SheetDescription>
                   <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     <button
@@ -360,7 +425,7 @@ export function ContactDetailView({
                       className="flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
                     >
                       <Phone className="size-3" />
-                      {contact.phone}
+                      {formatPhoneDisplay(contact.phone)}
                       {copiedPhone ? (
                         <Check className="size-3 text-primary" />
                       ) : (
@@ -454,6 +519,16 @@ export function ContactDetailView({
                       value={editCompany}
                       onChange={(e) => setEditCompany(e.target.value)}
                       className="bg-muted border-border text-foreground h-8 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-muted-foreground text-xs">About / Status</Label>
+                    <Textarea
+                      value={editStatus}
+                      onChange={(e) => setEditStatus(e.target.value)}
+                      placeholder="What's on their mind?"
+                      rows={2}
+                      className="bg-muted border-border text-foreground text-sm resize-none"
                     />
                   </div>
                   <Button

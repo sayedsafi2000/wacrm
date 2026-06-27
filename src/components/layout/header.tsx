@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { cn } from "@/lib/utils";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -46,6 +47,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
   const title = getPageTitle(pathname);
+  const isInbox = pathname.startsWith("/inbox");
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??
@@ -53,19 +55,37 @@ export function Header({ onOpenSidebar }: HeaderProps) {
     "U";
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-4 lg:px-6">
+    <header
+      className={cn(
+        "flex h-14 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6",
+        isInbox
+          ? "border-[#e9edef] bg-white dark:border-[#222d34] dark:bg-[#111b21] lg:border-border lg:bg-background"
+          : "border-border bg-background",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-2">
-        {/* Hamburger — mobile only. 44×44 hit target per Apple HIG. */}
         <button
           type="button"
           onClick={onOpenSidebar}
           aria-label="Open menu"
-          className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-md transition-colors lg:hidden",
+            isInbox
+              ? "text-[#54656f] hover:bg-[#f0f2f5] dark:text-[#aebac1] dark:hover:bg-[#202c33]"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
-          {title}
+        <h1
+          className={cn(
+            "truncate text-base font-semibold sm:text-lg",
+            isInbox
+              ? "text-[#008069] dark:text-[#25D366] lg:text-foreground"
+              : "text-foreground",
+          )}
+        >
+          {isInbox ? "Chats" : title}
         </h1>
       </div>
 

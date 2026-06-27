@@ -119,10 +119,10 @@ export default function DashboardPage() {
   )
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+        <h1 className="text-xl font-bold text-foreground sm:text-2xl">Dashboard</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Live analytics across conversations, contacts, deals, broadcasts, and automations.
         </p>
@@ -189,8 +189,8 @@ export default function DashboardPage() {
           stretched height so their rounded borders line up. Without
           this, the pipeline card rendered at its natural (shorter)
           height while the line chart drove the row height. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        <div className="h-full lg:col-span-3">
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
+        <div className="min-w-0 lg:col-span-3">
           <ConversationsChart
             series={series}
             loading={seriesLoading}
@@ -198,7 +198,7 @@ export default function DashboardPage() {
             onRangeChange={handleRangeChange}
           />
         </div>
-        <div className="h-full lg:col-span-2">
+        <div className="min-w-0 lg:col-span-2">
           <PipelineDonut
             data={pipeline}
             loading={pipelineLoading}

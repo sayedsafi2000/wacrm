@@ -259,6 +259,64 @@ export async function sendTextMessage(
   return { messageId: data.messages[0].id }
 }
 
+export interface SendLocationMessageArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  latitude: number
+  longitude: number
+  name?: string
+  address?: string
+  contextMessageId?: string
+}
+
+/** Send a map pin to the customer via WhatsApp Cloud API. */
+export async function sendLocationMessage(
+  args: SendLocationMessageArgs,
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    latitude,
+    longitude,
+    name,
+    address,
+    contextMessageId,
+  } = args
+
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const location: Record<string, string> = {
+    latitude: String(latitude),
+    longitude: String(longitude),
+  }
+  if (name?.trim()) location.name = name.trim()
+  if (address?.trim()) location.address = address.trim()
+
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'location',
+    location,
+  }
+  if (contextMessageId) body.context = { message_id: contextMessageId }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
 export type MediaKind = 'image' | 'video' | 'document' | 'audio'
 
 export interface SendMediaMessageArgs {

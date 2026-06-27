@@ -31,11 +31,11 @@ export function ReplyQuote({
     <div
       className={cn(
         "flex items-start gap-2 border-l-2 px-2 py-1",
-        onPrimary ? "border-primary-foreground/50" : "border-primary",
+        onPrimary ? "border-[#06CF9C] dark:border-white/40" : "border-emerald-600",
         isChip
           ? "rounded-md bg-muted/80"
           : onPrimary
-            ? "mb-1.5 rounded-md bg-primary-foreground/15"
+            ? "mb-1.5 rounded-md bg-black/[0.06] dark:bg-black/20"
             : "mb-1.5 rounded-md bg-background/20",
       )}
     >
@@ -43,7 +43,9 @@ export function ReplyQuote({
         <div
           className={cn(
             "truncate text-[11px] font-medium",
-            onPrimary ? "text-primary-foreground" : "text-primary",
+            onPrimary
+              ? "text-[#06CF9C] dark:text-[#53BDEB]"
+              : "text-emerald-600 dark:text-emerald-400",
           )}
         >
           {authorLabel}

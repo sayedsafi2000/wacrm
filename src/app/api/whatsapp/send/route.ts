@@ -4,8 +4,10 @@ import {
   sendTextMessage,
   sendTemplateMessage,
   sendMediaMessage,
+  sendLocationMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
+import { formatLocationContent } from '@/lib/inbox/location-message'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import {
@@ -74,6 +76,10 @@ export async function POST(request: Request) {
       template_params,
       template_message_params,
       reply_to_message_id,
+      latitude,
+      longitude,
+      location_name,
+      location_address,
     } = body
 
     if (!conversation_id || !message_type) {
@@ -90,12 +96,42 @@ export async function POST(request: Request) {
 
     // Reject anything outside the known set up front rather than letting
     // an unknown type fall through to the text path with empty content.
-    const VALID_MESSAGE_TYPES = ['text', 'template', ...MEDIA_KINDS] as const
+    const VALID_MESSAGE_TYPES = [
+      'text',
+      'template',
+      'location',
+      ...MEDIA_KINDS,
+    ] as const
     if (!(VALID_MESSAGE_TYPES as readonly string[]).includes(message_type)) {
       return NextResponse.json(
         { error: `Unsupported message_type "${message_type}"` },
         { status: 400 }
       )
+    }
+
+    let locationContentText: string | null = null
+    if (message_type === 'location') {
+      const lat = Number(latitude)
+      const lng = Number(longitude)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return NextResponse.json(
+          { error: 'latitude and longitude are required for location messages' },
+          { status: 400 },
+        )
+      }
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return NextResponse.json(
+          { error: 'Invalid latitude or longitude' },
+          { status: 400 },
+        )
+      }
+      locationContentText = formatLocationContent({
+        latitude: lat,
+        longitude: lng,
+        name: typeof location_name === 'string' ? location_name : undefined,
+        address:
+          typeof location_address === 'string' ? location_address : undefined,
+      })
     }
 
     if (message_type === 'text' && !content_text) {
@@ -304,6 +340,25 @@ export async function POST(request: Request) {
         })
         return result.messageId
       }
+      if (message_type === 'location') {
+        const loc = JSON.parse(locationContentText!) as {
+          latitude: number
+          longitude: number
+          name?: string
+          address?: string
+        }
+        const result = await sendLocationMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          name: loc.name,
+          address: loc.address,
+          contextMessageId,
+        })
+        return result.messageId
+      }
       const result = await sendTextMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
@@ -364,13 +419,16 @@ export async function POST(request: Request) {
     // (see supabase/migrations/001_initial_schema.sql):
     //   conversation_id, sender_type, content_type, content_text,
     //   media_url, template_name, message_id, status, created_at
+    const storedContentText =
+      message_type === 'location' ? locationContentText : content_text || null
+
     const { data: messageRecord, error: msgError } = await supabase
       .from('messages')
       .insert({
         conversation_id,
         sender_type: 'agent',
         content_type: message_type,
-        content_text: content_text || null,
+        content_text: storedContentText,
         media_url: media_url || null,
         template_name: template_name || null,
         message_id: waMessageId,
@@ -392,7 +450,9 @@ export async function POST(request: Request) {
     await supabase
       .from('conversations')
       .update({
-        last_message_text: content_text || `[${message_type}]`,
+        last_message_text:
+          storedContentText ||
+          (message_type === 'location' ? '📍 Location' : `[${message_type}]`),
         last_message_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })

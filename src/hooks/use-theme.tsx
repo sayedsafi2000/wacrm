@@ -76,6 +76,12 @@ function readInitialMode(): Mode {
   return DEFAULT_MODE;
 }
 
+function applyModeToDocument(mode: Mode) {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.mode = mode;
+  document.documentElement.classList.toggle("dark", mode === "dark");
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(readInitialTheme);
   const [mode, setModeState] = useState<Mode>(readInitialMode);
@@ -95,9 +101,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
-    if (typeof document !== "undefined") {
-      document.documentElement.dataset.mode = next;
-    }
+    applyModeToDocument(next);
     try {
       localStorage.setItem(MODE_STORAGE_KEY, next);
     } catch {
@@ -108,6 +112,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const toggleMode = useCallback(() => {
     setMode(mode === "dark" ? "light" : "dark");
   }, [mode, setMode]);
+
+  // Keep `.dark` in sync on first client render (boot script sets data-mode
+  // but may predate the classList toggle).
+  useEffect(() => {
+    applyModeToDocument(mode);
+  }, [mode]);
 
   // Sync from other tabs — change theme or mode in tab A, tab B
   // catches up without a refresh.
@@ -123,7 +133,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (e.key === MODE_STORAGE_KEY) {
         if (isMode(e.newValue) && e.newValue !== mode) {
           setModeState(e.newValue);
-          document.documentElement.dataset.mode = e.newValue;
+          applyModeToDocument(e.newValue);
         }
       }
     }
