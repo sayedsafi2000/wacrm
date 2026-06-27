@@ -8,6 +8,24 @@ import type { Message } from '@/types'
 
 type DeleteScope = 'me' | 'everyone'
 
+type MessageDeleteRow = Pick<
+  Message,
+  | 'id'
+  | 'conversation_id'
+  | 'sender_type'
+  | 'message_id'
+  | 'created_at'
+  | 'deleted_at'
+>
+
+function nestedAccountId(
+  conversation: { account_id: string } | { account_id: string }[] | null,
+): string | null {
+  if (!conversation) return null
+  const row = Array.isArray(conversation) ? conversation[0] : conversation
+  return row?.account_id ?? null
+}
+
 /**
  * POST /api/whatsapp/messages/[id]/delete
  *
@@ -81,12 +99,19 @@ export async function POST(
       return NextResponse.json({ error: 'Message not found' }, { status: 404 })
     }
 
-    const conv = message.conversation as { account_id: string } | null
-    if (!conv || conv.account_id !== accountId) {
+    const convAccountId = nestedAccountId(message.conversation)
+    if (!convAccountId || convAccountId !== accountId) {
       return NextResponse.json({ error: 'Message not found' }, { status: 404 })
     }
 
-    const row = message as Message
+    const row: MessageDeleteRow = {
+      id: message.id,
+      conversation_id: message.conversation_id,
+      sender_type: message.sender_type,
+      message_id: message.message_id,
+      created_at: message.created_at,
+      deleted_at: message.deleted_at,
+    }
 
     if (scope === 'me') {
       if (!canDeleteForMe(row)) {
